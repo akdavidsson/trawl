@@ -194,7 +194,7 @@ func deriveNewStrategy(ctx context.Context, opts Options, html []byte) (*strateg
 	}
 
 	// Detect candidate data regions — gives the LLM focused item HTML
-	candidates := detectCandidates(html, opts.Verbose)
+	candidates := detectCandidates(html, opts.Query, opts.Verbose)
 
 	// Only simplify the full page if we have no candidates (fallback)
 	simplified := ""
@@ -232,7 +232,7 @@ func deriveNewStrategy(ctx context.Context, opts Options, html []byte) (*strateg
 	return strat, nil
 }
 
-func detectCandidates(html []byte, verbose bool) []strategy.CandidateRegion {
+func detectCandidates(html []byte, query string, verbose bool) []strategy.CandidateRegion {
 	regions, err := analyze.DetectCandidateRegions(html)
 	if err != nil || len(regions) == 0 {
 		return nil
@@ -242,28 +242,50 @@ func detectCandidates(html []byte, verbose bool) []strategy.CandidateRegion {
 		fmt.Fprintf(os.Stderr, "[analyze] detected %d candidate data region(s)\n", len(regions))
 	}
 
-	// Convert to strategy.CandidateRegion with samples
+	// If a query is provided, re-sort regions to prioritize those whose
+	// context/heading matches the query. This ensures the LLM sees the
+	// relevant section even if it ranks lower by size.
+	if query != "" {
+		queryLower := strings.ToLower(query)
+		queryWords := strings.Fields(queryLower)
+		reorderByQueryRelevance(regions, queryWords)
+	}
+
+	// Convert to strategy.CandidateRegion with samples.
+	// Deduplicate by context so the LLM sees diverse page sections
+	// (not 5 variants of the same "Top Models" table).
+	seenContext := make(map[string]int) // context -> count of regions with that context
 	var candidates []strategy.CandidateRegion
 	for _, r := range regions {
-		sample := r.HTML
-		if len(sample) > 2000 {
-			sample = sample[:2000] + "\n..."
-		}
 		singleItem := r.SingleItemHTML
 		if len(singleItem) > 2000 {
 			singleItem = singleItem[:2000] + "\n..."
+		}
+		if singleItem == "" {
+			continue
 		}
 
 		// Build item CSS selector
 		itemSel := r.ItemTag
 		if r.ItemClass != "" {
-			// Use first 2-3 stable class tokens for the selector
 			classes := strings.Fields(r.ItemClass)
 			if len(classes) > 3 {
 				classes = classes[:3]
 			}
 			itemSel += "." + strings.Join(classes, ".")
 		}
+
+		// Limit duplicate contexts: allow at most 2 regions per section heading.
+		// This ensures we see diverse sections (Top Models, Market Share, Top Apps)
+		// instead of 5 variants of the same section.
+		ctxKey := strings.ToLower(r.Context)
+		if ctxKey == "" {
+			ctxKey = "_no_context_"
+		}
+		if seenContext[ctxKey] >= 2 {
+			continue
+		}
+		seenContext[ctxKey]++
 
 		if verbose {
 			snippet := singleItem
@@ -274,24 +296,52 @@ func detectCandidates(html []byte, verbose bool) []strategy.CandidateRegion {
 			fmt.Fprintf(os.Stderr, "[analyze]     singleItem: %s\n", snippet)
 		}
 
-		if singleItem == "" {
-			continue
+		sample := r.HTML
+		if len(sample) > 2000 {
+			sample = sample[:2000] + "\n..."
 		}
 
 		candidates = append(candidates, strategy.CandidateRegion{
 			Selector:       r.Selector,
 			ItemCount:      r.ItemCount,
 			Context:        r.Context,
+			SectionID:      r.SectionID,
 			Sample:         sample,
 			ItemSelector:   itemSel,
 			SingleItemHTML: singleItem,
 		})
-		// Limit to top 5 regions
-		if len(candidates) >= 5 {
+		if len(candidates) >= 7 {
 			break
 		}
 	}
 	return candidates
+}
+
+// reorderByQueryRelevance moves regions with query-matching context to the front,
+// preserving their relative order. Non-matching regions follow in original order.
+func reorderByQueryRelevance(regions []analyze.CandidateRegion, queryWords []string) {
+	var matching, rest []analyze.CandidateRegion
+	for _, r := range regions {
+		ctxLower := strings.ToLower(r.Context)
+		idLower := strings.ToLower(r.SectionID)
+		// Also check ID with hyphens replaced (e.g. "market-share" matches "market share")
+		idWords := strings.ReplaceAll(idLower, "-", " ")
+		htmlLower := strings.ToLower(r.SingleItemHTML)
+		matched := false
+		for _, w := range queryWords {
+			if strings.Contains(ctxLower, w) || strings.Contains(idLower, w) ||
+				strings.Contains(idWords, w) || strings.Contains(htmlLower, w) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			matching = append(matching, r)
+		} else {
+			rest = append(rest, r)
+		}
+	}
+	copy(regions, append(matching, rest...))
 }
 
 // looksJSRendered checks if the HTML looks like a client-side SPA

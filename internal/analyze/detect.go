@@ -16,6 +16,7 @@ type CandidateRegion struct {
 	ItemCount      int    // number of repeated items found
 	HasHeaders     bool   // whether the region has obvious headers (th, thead)
 	Context        string // nearby heading or caption text
+	SectionID      string // nearest ancestor element ID (e.g. "market-share", "leaderboard")
 	ItemTag        string // tag of the repeating child element (e.g. "div", "tr", "li")
 	ItemClass      string // class of the repeating child (first few tokens)
 	SingleItemHTML string // outer HTML of one single item
@@ -46,6 +47,7 @@ func DetectCandidateRegions(html []byte) ([]CandidateRegion, error) {
 			ItemCount:  rows.Length(),
 			HasHeaders: s.Find("thead, th").Length() > 0,
 			Context:    findContext(s),
+			SectionID:  findSectionID(s),
 			ItemTag:    "tr",
 		}
 		h, _ := goquery.OuterHtml(s)
@@ -67,6 +69,7 @@ func DetectCandidateRegions(html []byte) ([]CandidateRegion, error) {
 			Selector:  buildSelector(s, i),
 			ItemCount: lis.Length(),
 			Context:   findContext(s),
+			SectionID: findSectionID(s),
 			ItemTag:   "li",
 		}
 		h, _ := goquery.OuterHtml(s)
@@ -131,6 +134,7 @@ func DetectCandidateRegions(html []byte) ([]CandidateRegion, error) {
 			Selector:  buildSelector(s, i),
 			ItemCount: bestCount,
 			Context:   findContext(s),
+			SectionID: findSectionID(s),
 			ItemTag:   itemTag,
 			ItemClass: itemClass,
 		}
@@ -206,6 +210,7 @@ func DetectCandidateRegions(html []byte) ([]CandidateRegion, error) {
 			Selector:       parentSel,
 			ItemCount:      len(elems),
 			Context:        findContext(parent),
+			SectionID:      findSectionID(parent),
 			ItemTag:        itemTag,
 			ItemClass:      itemClass,
 			SingleItemHTML: firstHTML,
@@ -356,4 +361,17 @@ func findContext(s *goquery.Selection) string {
 
 func isHeading(tag string) bool {
 	return tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6"
+}
+
+// findSectionID walks up the DOM tree to find the nearest ancestor with an id attribute.
+// Returns the id value (e.g. "market-share", "leaderboard") or empty string.
+func findSectionID(s *goquery.Selection) string {
+	el := s
+	for depth := 0; depth < 10 && el.Length() > 0; depth++ {
+		if id, ok := el.Attr("id"); ok && id != "" {
+			return id
+		}
+		el = el.Parent()
+	}
+	return ""
 }

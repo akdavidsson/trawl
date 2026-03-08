@@ -76,6 +76,7 @@ type CandidateRegion struct {
 	Selector       string
 	ItemCount      int
 	Context        string // nearby heading text
+	SectionID      string // nearest ancestor element ID (e.g. "market-share")
 	Sample         string // first ~2000 chars of region HTML
 	ItemSelector   string // CSS selector for a single repeating item
 	SingleItemHTML string // HTML of one single item (for the LLM to examine)
@@ -329,14 +330,21 @@ func buildDerivePrompt(req DeriveRequest) string {
 			if r.Context != "" {
 				sb.WriteString(fmt.Sprintf(", section: %q", r.Context))
 			}
+			if r.SectionID != "" {
+				sb.WriteString(fmt.Sprintf(", id: %q", r.SectionID))
+			}
 			sb.WriteString(" ---\n")
+			if r.SectionID != "" {
+				sb.WriteString(fmt.Sprintf("section_id: #%s\n", r.SectionID))
+			}
 			sb.WriteString(fmt.Sprintf("parent_selector: %s\n", r.Selector))
 			sb.WriteString(fmt.Sprintf("item_selector: %s\n", r.ItemSelector))
 			sb.WriteString(fmt.Sprintf("```html\n%s\n```\n\n", r.SingleItemHTML))
 		}
 
-		sb.WriteString("Choose the best region. Use its item_selector.\n")
-		sb.WriteString("If multiple regions use the same item_selector, set container_selector to the chosen region's parent_selector.\n")
+		sb.WriteString("Choose the best region matching the query/fields. Use its item_selector.\n")
+		sb.WriteString("If multiple regions use the same item_selector, set container_selector to scope to the correct section.\n")
+		sb.WriteString("PREFER using #section_id as container_selector (e.g. \"#market-share\") — IDs are the most reliable selectors.\n")
 		sb.WriteString("Write field selectors that work WITHIN the single item HTML shown.\n")
 		sb.WriteString("ONLY use tags/classes visible in the HTML above.\n")
 	} else {

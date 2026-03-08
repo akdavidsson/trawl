@@ -42,6 +42,10 @@ func FetchWithBrowser(url string, opts Options) ([]byte, error) {
 		fmt.Fprintln(os.Stderr, "warning: page idle timeout, using partial render")
 	}
 
+	// Scroll to bottom to trigger intersection-observer lazy loading,
+	// then scroll back to top. Many modern sites only load content when visible.
+	scrollToLoadAll(page)
+
 	// Wait for DOM to stabilize — React/Next.js SPAs often render data after idle
 	waitForDOMStable(page)
 
@@ -106,26 +110,61 @@ func captureIframeContent(page *rod.Page) string {
 	return best
 }
 
-// waitForDOMStable polls the page until the DOM element count stops changing,
-// indicating that client-side rendering (React, Vue, etc.) has finished.
+// scrollToLoadAll scrolls through the page to trigger intersection-observer
+// lazy loading. Many modern sites only render content when it enters the viewport.
+func scrollToLoadAll(page *rod.Page) {
+	page.Eval(`() => {
+		return new Promise((resolve) => {
+			const distance = window.innerHeight;
+			const delay = 150;
+			let scrolled = 0;
+			const maxScroll = document.body.scrollHeight;
+			const timer = setInterval(() => {
+				window.scrollBy(0, distance);
+				scrolled += distance;
+				if (scrolled >= maxScroll) {
+					clearInterval(timer);
+					window.scrollTo(0, 0);
+					resolve();
+				}
+			}, delay);
+			// Safety timeout
+			setTimeout(() => { clearInterval(timer); window.scrollTo(0, 0); resolve(); }, 8000);
+		});
+	}`)
+}
+
+// waitForDOMStable polls the page until the DOM element count stops changing
+// AND skeleton loading placeholders have decreased. This ensures React/Next.js
+// SPAs finish rendering lazy-loaded sections (charts, tables loaded via API).
 func waitForDOMStable(page *rod.Page) {
-	var lastCount int
+	var lastCount, lastSkeletons int
 	stableRounds := 0
 	for i := 0; i < 20; i++ { // max 10 seconds (20 * 500ms)
-		res, err := page.Eval(`() => document.querySelectorAll('*').length`)
+		res, err := page.Eval(`() => ({
+			total: document.querySelectorAll('*').length,
+			skeletons: document.querySelectorAll('.animate-pulse, [class*="skeleton"]').length
+		})`)
 		if err != nil {
 			return
 		}
-		count := res.Value.Int()
-		if count == lastCount && count > 0 {
+		total := res.Value.Get("total").Int()
+		skeletons := res.Value.Get("skeletons").Int()
+
+		domStable := total == lastCount && total > 0
+		skeletonsStable := skeletons == lastSkeletons
+		noSkeletons := skeletons == 0
+
+		if domStable && (noSkeletons || skeletonsStable) {
 			stableRounds++
 			if stableRounds >= 2 {
-				return // DOM stable for 1+ second
+				return
 			}
 		} else {
 			stableRounds = 0
 		}
-		lastCount = count
+		lastCount = total
+		lastSkeletons = skeletons
 		time.Sleep(500 * time.Millisecond)
 	}
 }
