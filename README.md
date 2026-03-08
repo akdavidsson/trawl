@@ -11,6 +11,12 @@ trawl lets you define *what* you want semantically â€” not with CSS selectors â€
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/akdavidsson/trawl/main/install.sh | sh
+```
+
+Or with Go:
+
+```bash
 go install github.com/akdavidsson/trawl@latest
 ```
 
