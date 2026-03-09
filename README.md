@@ -33,6 +33,8 @@ go build -o trawl .
 ## Quickstart
 
 ```bash
+export GOOGLE_GEMINI_APIKEY=AIzaSy...
+# Or, if using Anthropic:
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Extract product data as JSON
@@ -142,7 +144,7 @@ trawl "https://example.com/dashboard" --fields "metric, value" \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `claude-sonnet-4-6` | Anthropic model to use |
+| `--model` | | LLM model to use (default depends on API key) |
 | `--no-llm` | | Disable LLM, use heuristic extraction only |
 
 ### General
@@ -176,7 +178,7 @@ URL ──► Fetch ──► Detect Data Regions ──► LLM Strategy Derivat
    - **Captures iframe content** — sites like HuggingFace Spaces embed their app inside an iframe. trawl inspects all iframes, compares content richness, and uses the richest source.
 2. **Detect candidate data regions** using heuristic analysis: find tables, lists, and repeated div/section patterns. Each region is scored by content richness (average item size) to distinguish real data from navigation, footers, and SVG charts. Section headings and HTML `id` attributes are captured for context.
 3. **Check cache**: if a strategy exists for this URL pattern + structural fingerprint, skip the LLM entirely.
-4. **Derive strategy** via Anthropic API: send focused single-item HTML snippets from the top candidate regions (not the full page), along with section context, query text, and field descriptions. The LLM returns CSS selectors, a `container_selector` to scope extraction to the correct page section, attribute mappings, transforms, and fallback selectors. If the selectors fail validation against the page, a retry with feedback is attempted automatically.
+4. **Derive strategy** via LLM API: send focused single-item HTML snippets from the top candidate regions (not the full page), along with section context, query text, and field descriptions. The LLM returns CSS selectors, a `container_selector` to scope extraction to the correct page section, attribute mappings, transforms, and fallback selectors. If the selectors fail validation against the page, a retry with feedback is attempted automatically.
 5. **Extract** data using pure Go + goquery: apply CSS selectors within the scoped container. Records where most fields are null (from mismatched sections) are automatically filtered out.
 6. **Monitor health**: track what percentage of fields were populated. If it drops below 70%, trigger self-healing — re-derive the strategy and keep whichever produces better results.
 7. **Output** results as JSON, JSONL, CSV, or Parquet.
@@ -338,6 +340,8 @@ trawl reads configuration from the environment and an optional config file.
 **Environment variable:**
 
 ```bash
+export GOOGLE_GEMINI_APIKEY=AIzaSy...
+# Or, if using Anthropic:
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -387,4 +391,4 @@ trawl uses the LLM for **intelligence** (figuring out the right selectors) and G
 ## Requirements
 
 - Go 1.24+
-- `ANTHROPIC_API_KEY` (not required for `--plan` with `--strategy`)
+- `GOOGLE_GEMINI_APIKEY` or `ANTHROPIC_API_KEY` (not required for `--plan` with `--strategy`)

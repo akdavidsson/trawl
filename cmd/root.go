@@ -100,7 +100,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&flagNoHeal, "no-heal", false, "disable self-healing")
 
 	// LLM
-	rootCmd.Flags().StringVar(&flagModel, "model", "", "Anthropic model (default: claude-sonnet-4-6)")
+	rootCmd.Flags().StringVar(&flagModel, "model", "", "LLM model (default depends on which API key is set)")
 	rootCmd.Flags().BoolVar(&flagNoLLM, "no-llm", false, "disable LLM, use heuristic extraction only")
 
 	// General
@@ -176,6 +176,7 @@ func run(cmd *cobra.Command, args []string) error {
 		FieldNames: userSchema.FieldNames(),
 		FieldDescs: fieldDescs,
 		Query:      flagQuery,
+		Provider:   cfg.Provider,
 		Model:      cfg.Model,
 		APIKey:     cfg.APIKey,
 		MaxPages:   flagMaxPages,
@@ -283,6 +284,7 @@ func runPlan(ctx context.Context, url string, cfg *config.Config, userSchema *sc
 		FieldNames:       userSchema.FieldNames(),
 		FieldDescs:       fieldDescs,
 		Query:            flagQuery,
+		Provider:         cfg.Provider,
 		Model:            cfg.Model,
 		APIKey:           cfg.APIKey,
 		CandidateRegions: candidates,
