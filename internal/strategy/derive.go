@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"google.golang.org/genai"
 )
 
 const (
@@ -66,6 +68,7 @@ type DeriveRequest struct {
 	FieldDescs       map[string]string // optional field descriptions
 	Query            string            // natural language query (--query mode)
 	Model            string
+	Provider         string
 	APIKey           string
 	CandidateRegions []CandidateRegion // pre-detected repeating patterns (optional)
 	RawHTML          []byte            // raw HTML for validation-retry loop (optional)
@@ -112,7 +115,13 @@ type anthropicResponse struct {
 func Derive(ctx context.Context, req DeriveRequest) (*ExtractionStrategy, error) {
 	messages := []anthropicMessage{{Role: "user", Content: buildDerivePrompt(req)}}
 
-	strat, err := callAnthropic(ctx, req.Model, req.APIKey, messages)
+	var strat *ExtractionStrategy
+	var err error
+	if req.Provider == "gemini" {
+		strat, err = callGemini(ctx, req.Model, req.APIKey, messages)
+	} else {
+		strat, err = callAnthropic(ctx, req.Model, req.APIKey, messages)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +135,12 @@ func Derive(ctx context.Context, req DeriveRequest) (*ExtractionStrategy, error)
 				anthropicMessage{Role: "assistant", Content: strat.toJSON()},
 				anthropicMessage{Role: "user", Content: retryMsg},
 			)
-			retryStrat, err := callAnthropic(ctx, req.Model, req.APIKey, messages)
+			var retryStrat *ExtractionStrategy
+			if req.Provider == "gemini" {
+				retryStrat, err = callGemini(ctx, req.Model, req.APIKey, messages)
+			} else {
+				retryStrat, err = callAnthropic(ctx, req.Model, req.APIKey, messages)
+			}
 			if err != nil {
 				return strat, nil // return original on retry failure
 			}
@@ -193,6 +207,86 @@ func callAnthropic(ctx context.Context, model, apiKey string, messages []anthrop
 	}
 
 	return parseStrategyFromResponse(apiResp.Content[0].Text)
+}
+
+func callGemini(ctx context.Context, model, apiKey string, messages []anthropicMessage) (*ExtractionStrategy, error) {
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey: apiKey,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating Gemini client: %w", err)
+	}
+
+	var contents []*genai.Content
+	for _, msg := range messages {
+		role := msg.Role
+		if role == "assistant" {
+			role = "model"
+		}
+		contents = append(contents, genai.NewContentFromText(msg.Content, genai.Role(role)))
+	}
+
+	config := &genai.GenerateContentConfig{
+		SystemInstruction: genai.NewContentFromText(systemPrompt, ""),
+		MaxOutputTokens:   deriveMaxTokens,
+		ResponseMIMEType:  "application/json",
+	}
+
+	resp, err := client.Models.GenerateContent(ctx, model, contents, config)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NOT_FOUND") {
+			fmt.Fprintf(os.Stderr, "Error: Model '%s' not found or not supported. Fetching available models...\n\n", model)
+			fmt.Fprintf(os.Stderr, "Available Gemini Models:\n")
+			page, listErr := client.Models.List(ctx, nil)
+			if listErr == nil {
+				var nextErr error
+				for nextErr == nil {
+					for _, m := range page.Items {
+						supported := false
+						if len(m.SupportedActions) == 0 {
+							supported = true
+						} else {
+							for _, action := range m.SupportedActions {
+								if strings.Contains(action, "generateContent") {
+									supported = true
+									break
+								}
+							}
+						}
+						if supported {
+							// print name, strip "models/" prefix if present
+							name := strings.TrimPrefix(m.Name, "models/")
+							fmt.Fprintf(os.Stderr, " - %s\n", name)
+						}
+					}
+					if page.NextPageToken == "" {
+						break
+					}
+					page, nextErr = page.Next(ctx)
+				}
+				fmt.Fprintf(os.Stderr, "\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "Failed to list models: %v\n", listErr)
+			}
+		}
+		return nil, fmt.Errorf("calling Gemini API: %w", err)
+	}
+
+	if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("empty response from Gemini API")
+	}
+
+	// Wait, the new SDK might have a different way to access text from Content.
+	// Let's assume resp.Text or something similar exists, wait let's look at GenerateContentResponse.
+	// Oh wait, in new SDK usually it's `resp.Text`
+	text := resp.Text()
+	if text == "" {
+		if len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil && len(resp.Candidates[0].Content.Parts) > 0 {
+			text = resp.Candidates[0].Content.Parts[0].Text
+		}
+	}
+
+	return parseStrategyFromResponse(text)
 }
 
 // buildRetryPrompt constructs feedback for the LLM when its selectors didn't work.

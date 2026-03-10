@@ -15,18 +15,19 @@ import (
 
 // Options configures a crawl run.
 type Options struct {
-	URL         string
-	FetchOpts   fetch.Options
-	Strategy    *strategy.ExtractionStrategy // pre-loaded strategy (nil = derive)
-	FieldNames  []string
-	FieldDescs  map[string]string
-	Query       string // natural language query (--query mode)
-	Model       string
-	APIKey      string
-	MaxPages    int
-	NoCache     bool
-	NoHeal      bool
-	Verbose     bool
+	URL        string
+	FetchOpts  fetch.Options
+	Strategy   *strategy.ExtractionStrategy // pre-loaded strategy (nil = derive)
+	FieldNames []string
+	FieldDescs map[string]string
+	Query      string // natural language query (--query mode)
+	Provider   string
+	Model      string
+	APIKey     string
+	MaxPages   int
+	NoCache    bool
+	NoHeal     bool
+	Verbose    bool
 }
 
 // Result holds the output of a full crawl run.
@@ -216,6 +217,7 @@ func deriveNewStrategy(ctx context.Context, opts Options, html []byte) (*strateg
 		FieldNames:       opts.FieldNames,
 		FieldDescs:       opts.FieldDescs,
 		Query:            opts.Query,
+		Provider:         opts.Provider,
 		Model:            opts.Model,
 		APIKey:           opts.APIKey,
 		CandidateRegions: candidates,
